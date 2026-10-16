@@ -1,16 +1,25 @@
 from __future__ import annotations
 
-import os
 import hmac
+from contextlib import asynccontextmanager
 from typing import Literal
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
+
+from app.config import settings
+from app.storage import initialize_database, recent_signals, save_signal
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    initialize_database()
+    yield
 
 app = FastAPI(
     title="MPV PRO V5",
-    version="0.1.0",
-    description="Trading signal intake and risk-planning API. No live orders are placed.",
+    version="0.2.0",
+    description="Trading signal intake and risk-planning API. Live orders are disabled.",
+    lifespan=lifespan,
 )
 
 class RiskRequest(BaseModel):
@@ -29,7 +38,7 @@ class RiskRequest(BaseModel):
         return self
 
 class TradingViewSignal(BaseModel):
-    secret: str
+    # Send the secret in the x-mpv-webhook-secret header, not in the JSON body.
     ticker: str = Field(min_length=1, max_length=40)
     action: Literal["BUY", "SELL"]
     timeframe: str = Field(default="unknown", max_length=20)
@@ -54,14 +63,9 @@ def health():
 def calculate_risk(request: RiskRequest):
     risk_distance = abs(request.entry - request.stop_loss)
     take_profit_distance = risk_distance * 3.0
-    take_profit = (
-        request.entry + take_profit_distance
-        if request.side == "BUY"
-        else request.entry - take_profit_distance
-    )
+    take_profit = request.entry + take_profit_distance if request.side == "BUY" else request.entry - take_profit_distance
     risk_amount = request.equity * request.risk_percent / 100.0
-    # Quantity estimate assumes the instrument's P&L per price unit equals quantity.
-    # Adapt this for contract multipliers, FX pip value, and exchange lot rules before use.
+    # Generic estimate only: instrument multipliers, tick/pip value, fees and lot rules are excluded.
     quantity_estimate = risk_amount / risk_distance
     return {
         "side": request.side,
@@ -72,7 +76,7 @@ def calculate_risk(request: RiskRequest):
         "risk_amount": round(risk_amount, 8),
         "risk_percent": request.risk_percent,
         "quantity_estimate": round(quantity_estimate, 8),
-        "note": "Estimate only; instrument contract size, fees, slippage and lot rules are not included.",
+        "note": "Estimate only; adapt quantity for the instrument's contract specifications and trading costs.",
     }
 
 @app.post("/webhook/tradingview")
@@ -80,16 +84,18 @@ def tradingview_webhook(
     signal: TradingViewSignal,
     x_mpv_webhook_secret: str | None = Header(default=None),
 ):
-    expected = os.getenv("TRADINGVIEW_WEBHOOK_SECRET")
+    expected = settings.tradingview_webhook_secret
     if not expected:
         raise HTTPException(status_code=503, detail="Webhook secret is not configured.")
-    supplied = x_mpv_webhook_secret or signal.secret
-    if not hmac.compare_digest(supplied, expected):
+    if not x_mpv_webhook_secret or not hmac.compare_digest(x_mpv_webhook_secret, expected):
         raise HTTPException(status_code=401, detail="Invalid webhook secret.")
-    # Do not echo secrets or place orders. Persisting/deduplicating and broker execution
-    # will be implemented only after storage and an execution provider are configured.
+    try:
+        inserted = save_signal(signal)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
         "accepted": True,
+        "duplicate": not inserted,
         "signal_id": signal.signal_id,
         "ticker": signal.ticker,
         "action": signal.action,
@@ -97,3 +103,7 @@ def tradingview_webhook(
         "execution": "disabled",
         "mode": "paper_only",
     }
+
+@app.get("/signals")
+def get_signals(limit: int = Query(default=50, ge=1, le=200)):
+    return {"signals": recent_signals(limit=limit), "live_execution_enabled": False}
