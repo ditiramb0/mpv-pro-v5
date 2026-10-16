@@ -8,7 +8,9 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 
 from app.config import settings
+from app.indicators import calculate_indicators
 from app.storage import initialize_database, recent_signals, save_signal
+from app.strategy import evaluate_trend
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -17,8 +19,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="MPV PRO V5",
-    version="0.2.0",
-    description="Trading signal intake and risk-planning API. Live orders are disabled.",
+    version="0.3.0",
+    description="Forex and crypto signal research API. Live orders are disabled.",
     lifespan=lifespan,
 )
 
@@ -38,19 +40,38 @@ class RiskRequest(BaseModel):
         return self
 
 class TradingViewSignal(BaseModel):
-    # Send the secret in the x-mpv-webhook-secret header, not in the JSON body.
     ticker: str = Field(min_length=1, max_length=40)
+    market: Literal["forex", "crypto"]
     action: Literal["BUY", "SELL"]
     timeframe: str = Field(default="unknown", max_length=20)
     entry: float | None = Field(default=None, gt=0)
     stop_loss: float | None = Field(default=None, gt=0)
     signal_id: str = Field(min_length=1, max_length=120)
 
+class Candle(BaseModel):
+    open: float = Field(gt=0)
+    high: float = Field(gt=0)
+    low: float = Field(gt=0)
+    close: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def valid_ohlc(self):
+        if self.low > min(self.open, self.close) or self.high < max(self.open, self.close) or self.low > self.high:
+            raise ValueError("Invalid OHLC candle: require low <= open/close <= high.")
+        return self
+
+class StrategyRequest(BaseModel):
+    market: Literal["forex", "crypto"]
+    ticker: str = Field(min_length=1, max_length=40)
+    timeframe: str = Field(min_length=1, max_length=20)
+    candles: list[Candle] = Field(min_length=220, max_length=5000)
+
 @app.get("/")
 def root():
     return {
         "name": "MPV PRO V5",
         "status": "running",
+        "supported_markets": ["forex", "crypto"],
         "mode": "paper_only",
         "live_execution_enabled": False,
     }
@@ -65,7 +86,6 @@ def calculate_risk(request: RiskRequest):
     take_profit_distance = risk_distance * 3.0
     take_profit = request.entry + take_profit_distance if request.side == "BUY" else request.entry - take_profit_distance
     risk_amount = request.equity * request.risk_percent / 100.0
-    # Generic estimate only: instrument multipliers, tick/pip value, fees and lot rules are excluded.
     quantity_estimate = risk_amount / risk_distance
     return {
         "side": request.side,
@@ -76,7 +96,25 @@ def calculate_risk(request: RiskRequest):
         "risk_amount": round(risk_amount, 8),
         "risk_percent": request.risk_percent,
         "quantity_estimate": round(quantity_estimate, 8),
-        "note": "Estimate only; adapt quantity for the instrument's contract specifications and trading costs.",
+        "note": "Estimate only; adapt quantity for the instrument's contract specifications, account currency, and trading costs.",
+    }
+
+@app.post("/strategy/evaluate")
+def strategy_evaluate(request: StrategyRequest):
+    candles = [c.model_dump() for c in request.candles]
+    try:
+        indicators = calculate_indicators(candles)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    result = evaluate_trend(indicators)
+    return {
+        "market": request.market,
+        "ticker": request.ticker,
+        "timeframe": request.timeframe,
+        "close": indicators.close,
+        "indicators": indicators.__dict__,
+        "signal": result,
+        "live_execution_enabled": False,
     }
 
 @app.post("/webhook/tradingview")
@@ -98,6 +136,7 @@ def tradingview_webhook(
         "duplicate": not inserted,
         "signal_id": signal.signal_id,
         "ticker": signal.ticker,
+        "market": signal.market,
         "action": signal.action,
         "timeframe": signal.timeframe,
         "execution": "disabled",
