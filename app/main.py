@@ -8,6 +8,8 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 
 from app.config import settings
+from app.backtest import run_backtest
+from app.timeframes import get_timeframe_profile
 from app.indicators import calculate_indicators
 from app.storage import initialize_database, recent_signals, save_signal
 from app.strategy import evaluate_trend
@@ -59,6 +61,14 @@ class Candle(BaseModel):
         if self.low > min(self.open, self.close) or self.high < max(self.open, self.close) or self.low > self.high:
             raise ValueError("Invalid OHLC candle: require low <= open/close <= high.")
         return self
+
+class BacktestRequest(BaseModel):
+    market: Literal["forex", "crypto"]
+    ticker: str = Field(min_length=1, max_length=40)
+    timeframe: str = Field(min_length=1, max_length=20)
+    candles: list[Candle] = Field(min_length=222, max_length=2000)
+    fee_rate: float = Field(default=0.0005, ge=0, le=0.02)
+    slippage_rate: float = Field(default=0.0002, ge=0, le=0.02)
 
 class StrategyRequest(BaseModel):
     market: Literal["forex", "crypto"]
@@ -116,6 +126,23 @@ def strategy_evaluate(request: StrategyRequest):
         "signal": result,
         "live_execution_enabled": False,
     }
+
+@app.get("/timeframes/{style}")
+def timeframe_profile(style: Literal["scalping", "day_trading", "swing_trading"]):
+    return get_timeframe_profile(style)
+
+@app.post("/backtest/run")
+def backtest_run(request: BacktestRequest):
+    try:
+        result = run_backtest(
+            [c.model_dump() for c in request.candles],
+            fee_rate=request.fee_rate,
+            slippage_rate=request.slippage_rate,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    result.update({"market": request.market, "ticker": request.ticker, "timeframe": request.timeframe})
+    return result
 
 @app.post("/webhook/tradingview")
 def tradingview_webhook(
