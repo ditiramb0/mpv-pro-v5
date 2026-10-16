@@ -31,6 +31,7 @@ def initialize_database() -> None:
             CREATE TABLE IF NOT EXISTS signals (
                 signal_id TEXT PRIMARY KEY,
                 ticker TEXT NOT NULL,
+                market TEXT NOT NULL DEFAULT 'crypto' CHECK(market IN ('forex', 'crypto')),
                 action TEXT NOT NULL CHECK(action IN ('BUY', 'SELL')),
                 timeframe TEXT NOT NULL,
                 entry REAL,
@@ -39,21 +40,24 @@ def initialize_database() -> None:
                 status TEXT NOT NULL DEFAULT 'received'
             )
         """)
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(signals)").fetchall()}
+        if "market" not in columns:
+            conn.execute("ALTER TABLE signals ADD COLUMN market TEXT NOT NULL DEFAULT 'crypto'")
 
 def save_signal(signal) -> bool:
     with connection() as conn:
         cursor = conn.execute("""
             INSERT OR IGNORE INTO signals
-                (signal_id, ticker, action, timeframe, entry, stop_loss)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (signal.signal_id, signal.ticker, signal.action, signal.timeframe,
-              signal.entry, signal.stop_loss))
+                (signal_id, ticker, market, action, timeframe, entry, stop_loss)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (signal.signal_id, signal.ticker, signal.market, signal.action,
+              signal.timeframe, signal.entry, signal.stop_loss))
         return cursor.rowcount == 1
 
 def recent_signals(limit: int = 50):
     with connection() as conn:
         rows = conn.execute(
-            "SELECT signal_id, ticker, action, timeframe, entry, stop_loss, received_at, status "
+            "SELECT signal_id, ticker, market, action, timeframe, entry, stop_loss, received_at, status "
             "FROM signals ORDER BY received_at DESC LIMIT ?",
             (limit,)
         ).fetchall()
