@@ -61,3 +61,18 @@ Send JSON with `ticker`, `market` (`forex` or `crypto`), `action` (`BUY` or `SEL
 ## Important limitations
 
 The strategy is an unvalidated research baseline, not a promise of profitability. Tests have been added but should be confirmed in a successful CI run. Advanced market structure (BOS/CHoCH, order blocks, FVG, liquidity sweeps), reliable multi-timeframe signal confirmation, news sentiment, and broker/exchange execution are not implemented. The generic quantity estimate does not account for contract multipliers, tick/pip value, lot size, account currency, or trading costs. Backtest and paper-trade before considering live use.
+
+
+## Deployment preparation (Railway / Docker)
+
+A Railway-compatible Docker deployment configuration is included. The container listens on the platform-provided `PORT` and exposes `/health` for health checks.
+
+Before deploying:
+1. Set `TRADINGVIEW_WEBHOOK_SECRET` to a long, random secret in the hosting provider's environment variables.
+2. Mount a persistent volume at `/data` and set `DATABASE_URL=sqlite:////data/mpv_pro_v5.db`. Without persistent storage, SQLite signal history may be lost when the service is replaced or redeployed.
+3. Keep live execution disabled. This version accepts and stores authenticated TradingView signals; it does not place broker/exchange orders.
+4. After deployment, verify `/health`, `/docs`, webhook authentication, duplicate-signal handling, and signal persistence.
+
+Do not put secrets in the repository or Docker image. The `.dockerignore` excludes local environment files and database files from the image build context.
+
+**Deployment status:** configuration only. A hosting account, persistent volume, environment variables, and public service URL must be configured in the hosting dashboard before this can be considered deployed.
