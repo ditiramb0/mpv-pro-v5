@@ -9,7 +9,7 @@ import httpx
 from app.indicators import calculate_indicators
 from app.strategy import evaluate_trend
 
-BASE_URL = "https://api.binance.com/api/v3/klines"
+BASE_URL = "https://data-api.binance.vision/api/v3/klines"
 DEFAULT_SYMBOLS = ["BTCUSDT", "ETHUSDT", "FETUSDT", "RENDERUSDT", "NEARUSDT", "SUIUSDT", "AKTUSDT"]
 
 
