@@ -46,6 +46,10 @@ def test_auto_evaluate_fetches_three_timeframes_and_returns_aligned_signal(monke
     assert len(calls) == 3
     assert all(call[3] == 220 for call in calls)
     assert data["live_execution_enabled"] is False
+    plan = data["trade_plan"]
+    assert plan["side"] == "BUY"
+    assert plan["stop_loss"] < plan["entry"] < plan["take_profit"]
+    assert abs((plan["take_profit"] - plan["entry"]) / (plan["entry"] - plan["stop_loss"]) - 3) < 1e-8
 
 
 def test_auto_evaluate_returns_hold_when_timeframes_disagree(monkeypatch):
@@ -62,3 +66,4 @@ def test_auto_evaluate_returns_hold_when_timeframes_disagree(monkeypatch):
     assert response.status_code == 200
     assert response.json()["signal"] == "HOLD"
     assert response.json()["alignment"] == "mixed_or_no_signal"
+    assert response.json()["trade_plan"] is None
