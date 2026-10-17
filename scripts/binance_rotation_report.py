@@ -38,12 +38,12 @@ def main() -> int:
             summary.write(f"Generated: {spot['generated_at']}\n\n")
             summary.write("**Mode: read-only public Spot and Futures data. No account access or orders.**\n\n")
             summary.write("## Spot rotation scan\n\n")
-            summary.write("| Symbol | Price (USDT) | 24h change | RSI (1h) | 1h | 4h | Signal | Score |\n")
-            summary.write("|---|---:|---:|---:|---|---|---|---:|\n")
+            summary.write("| Symbol | Price (USDT) | 24h change | RSI (1h) | 1h volume / 20h avg | 1h | 4h | Signal | Score |\n")
+            summary.write("|---|---:|---:|---:|---:|---|---|---|---:|\n")
             for item in spot["results"]:
                 summary.write(
                     f"| {item['symbol']} | {item['price']:.8g} | {item['change_24h_percent']:+.3f}% "
-                    f"| {item['rsi14_1h']:.2f} | {item['signal_1h']} | {item['signal_4h']} "
+                    f"| {item['rsi14_1h']:.2f} | {item['volume_vs_previous_20h_average']} | {item['signal_1h']} | {item['signal_4h']} "
                     f"| **{item['signal']}** | {item['rotation_score']:.3f} |\n"
                 )
             if spot["errors"]:
