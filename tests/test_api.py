@@ -73,7 +73,7 @@ def test_backtest_endpoint_returns_cost_assumptions_and_json_safe_metrics():
     assert data["profit_factor_status"] == "undefined_no_gross_losses"
 
 
-def test_webhook_requires_secret_and_deduplicates_signals(monkeypatch, tmp_path):
+def test_webhook_accepts_header_or_body_secret_and_deduplicates_signals(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "tradingview_webhook_secret", "test-secret")
     monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'signals.db'}")
     payload = {
@@ -85,6 +85,7 @@ def test_webhook_requires_secret_and_deduplicates_signals(monkeypatch, tmp_path)
         "entry": 65000,
         "stop_loss": 64000,
     }
+    body_secret_payload = {**payload, "signal_id": "test-signal-body-002", "secret": "test-secret"}
     with TestClient(app) as client:
         denied = client.post("/webhook/tradingview", json=payload)
         assert denied.status_code == 401
@@ -99,6 +100,7 @@ def test_webhook_requires_secret_and_deduplicates_signals(monkeypatch, tmp_path)
             json=payload,
             headers={"x-mpv-webhook-secret": "test-secret"},
         )
+        body_authenticated = client.post("/webhook/tradingview", json=body_secret_payload)
         listed = client.get("/signals")
 
     assert first.status_code == 200
@@ -106,4 +108,7 @@ def test_webhook_requires_secret_and_deduplicates_signals(monkeypatch, tmp_path)
     assert first.json()["execution"] == "disabled"
     assert second.status_code == 200
     assert second.json()["duplicate"] is True
-    assert len(listed.json()["signals"]) == 1
+    assert body_authenticated.status_code == 200
+    assert body_authenticated.json()["accepted"] is True
+    assert "secret" not in body_authenticated.json()
+    assert len(listed.json()["signals"]) == 2
