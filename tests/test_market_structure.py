@@ -10,7 +10,7 @@ from app.market_structure import analyze_market_structure
 def rising_candles(count=240):
     candles = []
     for i in range(count):
-        close = 100 + i * 0.2 + 1.5 * math.sin(i * 0.5)
+        close = 100 + i * 0.2 + 1.5 * math.sin(i * 0.5 + 3.0)
         candles.append({
             "open": close - 0.05,
             "high": close + 0.25,
@@ -23,7 +23,7 @@ def rising_candles(count=240):
 def falling_candles(count=240):
     candles = []
     for i in range(count):
-        close = 200 - i * 0.2 - 1.5 * math.sin(i * 0.5)
+        close = 200 - i * 0.2 - 1.5 * math.sin(i * 0.5 + 3.0)
         candles.append({
             "open": close + 0.05,
             "high": close + 0.25,
