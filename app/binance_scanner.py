@@ -22,9 +22,9 @@ def _parse_klines(rows: list[list[Any]], interval: str) -> list[dict[str, Any]]:
         candle = {
             "timestamp": datetime.fromtimestamp(int(row[0]) / 1000, tz=timezone.utc).isoformat(),
             "open": float(row[1]), "high": float(row[2]),
-            "low": float(row[3]), "close": float(row[4]),
+            "low": float(row[3]), "close": float(row[4]), "volume": float(row[5]),
         }
-        if min(candle["open"], candle["high"], candle["low"], candle["close"]) <= 0:
+        if min(candle["open"], candle["high"], candle["low"], candle["close"]) <= 0 or candle["volume"] < 0:
             raise ValueError("Binance returned non-positive OHLC values.")
         if candle["low"] > min(candle["open"], candle["close"]) or candle["high"] < max(candle["open"], candle["close"]) or candle["low"] > candle["high"]:
             raise ValueError("Binance returned invalid OHLC values.")
