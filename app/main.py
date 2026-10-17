@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hmac
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -29,7 +30,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="MPV PRO V5",
-    version="0.7.0",
+    version="0.8.0",
     description="Forex and crypto signal research API. Live orders are disabled.",
     lifespan=lifespan,
 )
@@ -152,6 +153,62 @@ async def market_data_candles(
         raise HTTPException(status_code=502, detail="Could not reach the market-data provider.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/strategy/auto-evaluate")
+async def strategy_auto_evaluate(
+    ticker: str = Query(min_length=1, max_length=40),
+    market: Literal["forex", "crypto"] = Query(),
+    style: Literal["scalping", "day_trading", "swing_trading"] = Query(default="day_trading"),
+):
+    profile = get_timeframe_profile(style)
+    timeframes = {
+        "entry": profile["entry_timeframes"][0],
+        "confirmation": profile["confirmation_timeframes"][0],
+        "context": profile["context_timeframes"][0],
+    }
+    try:
+        fetched = await asyncio.gather(*[
+            fetch_candles(ticker=ticker, market=market, timeframe=timeframe, limit=220)
+            for timeframe in timeframes.values()
+        ])
+        evaluations = {}
+        for role, timeframe, data in zip(timeframes.keys(), timeframes.values(), fetched):
+            snapshot = calculate_indicators(data["candles"])
+            evaluations[role] = {
+                "timeframe": timeframe,
+                "last_candle_at": data["candles"][-1]["timestamp"],
+                "close": snapshot.close,
+                "signal": evaluate_trend(snapshot),
+                "candle_count": data["count"],
+            }
+        entry_candles = fetched[0]["candles"]
+        structure = analyze_market_structure(entry_candles)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="Market-data provider request timed out.") from exc
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"Market-data provider returned HTTP {exc.response.status_code}.") from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail="Could not reach the market-data provider.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    actions = [evaluations[role]["signal"]["action"] for role in ("entry", "confirmation", "context")]
+    aligned = actions[0] in ("BUY", "SELL") and actions.count(actions[0]) == 3
+    return {
+        "ticker": ticker.upper(),
+        "market": market,
+        "style": style,
+        "evaluations": evaluations,
+        "alignment": "aligned" if aligned else "mixed_or_no_signal",
+        "signal": actions[0] if aligned else "HOLD",
+        "risk_reward_ratio": "1:3",
+        "market_structure": structure,
+        "live_execution_enabled": False,
+        "warning": "On-demand research signal only. Verify candle timestamps and provider coverage; no broker orders are placed and no profitability is implied.",
+    }
 
 
 @app.get("/news/sentiment")
