@@ -1,6 +1,6 @@
 # MPV PRO V5
 
-MPV PRO V5 is a forex and cryptocurrency trading-research API. It supports indicator-based baseline signals, multi-timeframe direction checks, heuristic market-structure analysis, risk planning, historical candle backtests, authenticated TradingView signal intake, and a persistent simulated paper-order ledger.
+MPV PRO V5 is a forex and cryptocurrency trading-research API. It supports indicator-based baseline signals, multi-timeframe direction checks, heuristic market-structure analysis, risk planning, historical candle backtests, Finnhub news sentiment, authenticated TradingView signal intake, and a persistent simulated paper-order ledger.
 
 **Current mode: research / paper-only. Live broker or exchange order execution is not implemented or enabled.** No strategy is guaranteed to be profitable.
 
@@ -8,6 +8,7 @@ MPV PRO V5 is a forex and cryptocurrency trading-research API. It supports indic
 
 - `GET /` and `GET /health`: service status and version.
 - `GET /timeframes/{style}`: profiles for `scalping`, `day_trading`, and `swing_trading`.
+- `GET /news/sentiment?ticker=BTCUSDT&market=crypto`: retrieve Finnhub category headlines and score them with a transparent keyword heuristic.
 - `POST /risk/calculate`: stop-loss / take-profit planning with fixed 1:3 risk-to-reward.
 - `POST /strategy/evaluate`: EMA 9/21/50/200, RSI, MACD, ADX, Bollinger Bands, and ATR; returns a transparent baseline BUY/SELL/HOLD.
 - `POST /strategy/multi-timeframe`: evaluates separate entry, confirmation, and context candle sets; returns BUY/SELL only when all three baseline signals agree, otherwise HOLD.
@@ -31,7 +32,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Set a unique `TRADINGVIEW_WEBHOOK_SECRET` in `.env`, then run:
+Set a unique `TRADINGVIEW_WEBHOOK_SECRET` in `.env`. To enable news sentiment, set `FINNHUB_API_KEY` using a key from your Finnhub account. Keep both secrets out of source control. Then run:
 
 ```bash
 uvicorn app.main:app --reload
@@ -56,6 +57,10 @@ These are configuration profiles, not evidence of strategy performance. Scalping
 The baseline requires aligned EMAs, MACD direction, an RSI range, and ADX trend strength. It returns BUY, SELL, or HOLD and an ATR-based stop/target distance at 1:3. Bollinger Bands are calculated as context but are not currently a signal condition.
 
 The multi-timeframe endpoint expects three separately supplied, chronological candle arrays for the same instrument. It does **not** resample candles, fetch market data, or verify timestamps/freshness. Supply correctly aligned datasets. All three signal directions must agree before it returns BUY or SELL.
+
+## News sentiment notes
+
+The news endpoint uses Finnhub's `/news` endpoint with `crypto` or `forex` categories. It filters for common asset/currency keywords when possible and falls back to category-level headlines if none match. Sentiment is a small, transparent positive/negative keyword count, **not** a trained language model. It can miss context, sarcasm, negation, and event-specific meaning; do not use it alone to trade. A Finnhub API key is required and the provider's rate limits, plan, and licensing terms apply.
 
 ## Market structure notes
 
@@ -83,18 +88,18 @@ A Railway-compatible Docker configuration is included. The container listens on 
 
 Before deploying:
 1. Set `TRADINGVIEW_WEBHOOK_SECRET` to a long, random secret in the hosting provider's environment variables.
-2. Mount a persistent volume at `/data` and set `DATABASE_URL=sqlite:////data/mpv_pro_v5.db`. Without persistent storage, SQLite history may be lost when the service is replaced or redeployed.
-3. Keep live execution disabled.
-4. After deployment, verify `/health`, `/docs`, webhook authentication, duplicate-signal handling, and paper-order persistence.
+2. Set `FINNHUB_API_KEY` if news sentiment is required.
+3. Mount a persistent volume at `/data` and set `DATABASE_URL=sqlite:////data/mpv_pro_v5.db`. Without persistent storage, SQLite history may be lost when the service is replaced or redeployed.
+4. Keep live execution disabled.
+5. After deployment, verify `/health`, `/docs`, webhook authentication, duplicate-signal handling, paper-order persistence, and news-provider error handling.
 
 Do not put secrets in the repository or Docker image. The `.dockerignore` excludes local environment files and database files from the image build context.
 
 ## Remaining before a production-ready system
 
 - Verify the latest CI run, including tests and Docker image build.
-- Add an approved market-data source and timestamp validation.
-- Add a selected news provider and a clearly labelled sentiment method.
-- Add broker-specific adapters, protective-order verification, and operational risk controls.
+- Add an approved market-data source, timestamp validation, and scheduled refresh.
+- Add broker-specific adapters, protective-order verification, emergency halt, daily loss limits, and operational monitoring.
 - Run realistic out-of-sample backtests and paper-trade for an extended period.
 - Configure hosting, persistent storage, secrets, and uptime monitoring.
 
