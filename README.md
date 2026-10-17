@@ -1,6 +1,6 @@
 # MPV PRO V5
 
-MPV PRO V5 is a forex and cryptocurrency trading-research API. It currently supports indicator-based baseline signals, explicit multi-timeframe direction checks, heuristic market-structure analysis, risk planning, historical candle backtests, and authenticated TradingView signal intake.
+MPV PRO V5 is a forex and cryptocurrency trading-research API. It supports indicator-based baseline signals, multi-timeframe direction checks, heuristic market-structure analysis, risk planning, historical candle backtests, authenticated TradingView signal intake, and a persistent simulated paper-order ledger.
 
 **Current mode: research / paper-only. Live broker or exchange order execution is not implemented or enabled.** No strategy is guaranteed to be profitable.
 
@@ -13,6 +13,9 @@ MPV PRO V5 is a forex and cryptocurrency trading-research API. It currently supp
 - `POST /strategy/multi-timeframe`: evaluates separate entry, confirmation, and context candle sets; returns BUY/SELL only when all three baseline signals agree, otherwise HOLD.
 - `POST /market-structure/analyze`: heuristic swing highs/lows, BOS/CHoCH events, fair-value gaps, simple order-block candidates, and liquidity sweeps.
 - `POST /backtest/run`: historical candle simulation with configurable proportional fee and slippage assumptions.
+- `POST /paper/orders`: create a persistent simulated order with a 1:3 target and estimated position size.
+- `GET /paper/orders`: list simulated orders.
+- `POST /paper/orders/{order_id}/close`: manually close a simulated order at a supplied price and estimate gross P&L.
 - `POST /webhook/tradingview`: authenticated signal intake with duplicate `signal_id` protection.
 - `GET /signals`: recent stored TradingView signals.
 - SQLite persistence and GitHub Actions tests.
@@ -52,11 +55,15 @@ These are configuration profiles, not evidence of strategy performance. Scalping
 
 The baseline requires aligned EMAs, MACD direction, an RSI range, and ADX trend strength. It returns BUY, SELL, or HOLD and an ATR-based stop/target distance at 1:3. Bollinger Bands are calculated as context but are not currently a signal condition.
 
-The multi-timeframe endpoint expects three separately supplied, chronological candle arrays for the same instrument. It does **not** resample candles, fetch market data, or verify timestamps/freshness for you. Supply correctly aligned datasets. All three signal directions must agree before it returns BUY or SELL.
+The multi-timeframe endpoint expects three separately supplied, chronological candle arrays for the same instrument. It does **not** resample candles, fetch market data, or verify timestamps/freshness. Supply correctly aligned datasets. All three signal directions must agree before it returns BUY or SELL.
 
 ## Market structure notes
 
 The structure endpoint uses transparent heuristics: swing pivots need bars on both sides, FVGs are three-candle gaps, and order-block candidates are the nearest opposite-colour candle before a close-based break of structure. BOS, CHoCH, FVGs, order blocks, and liquidity sweeps are interpreted differently by different traders; these labels are not validated entry signals and may require tuning.
+
+## Paper-order ledger
+
+Paper orders are stored in SQLite, support client-provided idempotency keys, calculate a 1:3 target, and can be manually closed to estimate gross P&L. This ledger does **not** connect to a live price feed, automatically trigger stops/targets, deduct costs, or send orders to a broker. Position sizing is an estimate and does not account for instrument contract multipliers, pip/tick values, or account-currency conversion.
 
 ## Backtest limitations
 
@@ -76,9 +83,9 @@ A Railway-compatible Docker configuration is included. The container listens on 
 
 Before deploying:
 1. Set `TRADINGVIEW_WEBHOOK_SECRET` to a long, random secret in the hosting provider's environment variables.
-2. Mount a persistent volume at `/data` and set `DATABASE_URL=sqlite:////data/mpv_pro_v5.db`. Without persistent storage, SQLite signal history may be lost when the service is replaced or redeployed.
+2. Mount a persistent volume at `/data` and set `DATABASE_URL=sqlite:////data/mpv_pro_v5.db`. Without persistent storage, SQLite history may be lost when the service is replaced or redeployed.
 3. Keep live execution disabled.
-4. After deployment, verify `/health`, `/docs`, webhook authentication, duplicate-signal handling, and signal persistence.
+4. After deployment, verify `/health`, `/docs`, webhook authentication, duplicate-signal handling, and paper-order persistence.
 
 Do not put secrets in the repository or Docker image. The `.dockerignore` excludes local environment files and database files from the image build context.
 
@@ -87,7 +94,7 @@ Do not put secrets in the repository or Docker image. The `.dockerignore` exclud
 - Verify the latest CI run, including tests and Docker image build.
 - Add an approved market-data source and timestamp validation.
 - Add a selected news provider and a clearly labelled sentiment method.
-- Add durable paper-order ledger, broker-specific adapters, protective-order verification, and operational risk controls.
+- Add broker-specific adapters, protective-order verification, and operational risk controls.
 - Run realistic out-of-sample backtests and paper-trade for an extended period.
 - Configure hosting, persistent storage, secrets, and uptime monitoring.
 
