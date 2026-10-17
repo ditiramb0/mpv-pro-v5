@@ -120,6 +120,39 @@ def recent_paper_orders(limit: int = 50):
         return [dict(row) for row in rows]
 
 
+def paper_risk_state(equity: float, max_daily_loss_percent: float, max_consecutive_losses: int) -> dict:
+    if equity <= 0 or max_daily_loss_percent <= 0 or max_consecutive_losses < 1:
+        raise ValueError("Equity and risk limits must be positive.")
+    with connection() as conn:
+        daily = conn.execute(
+            "SELECT COALESCE(SUM(pnl_estimate), 0) AS pnl FROM paper_orders "
+            "WHERE status = 'closed' AND date(closed_at) = date('now')"
+        ).fetchone()
+        recent = conn.execute(
+            "SELECT pnl_estimate FROM paper_orders WHERE status = 'closed' "
+            "ORDER BY closed_at DESC LIMIT ?",
+            (max_consecutive_losses,),
+        ).fetchall()
+    daily_pnl = float(daily["pnl"] or 0.0)
+    loss_limit_amount = equity * max_daily_loss_percent / 100.0
+    consecutive_losses = 0
+    for row in recent:
+        pnl = row["pnl_estimate"]
+        if pnl is None or pnl >= 0:
+            break
+        consecutive_losses += 1
+    return {
+        "daily_realized_pnl_estimate": round(daily_pnl, 8),
+        "daily_loss_limit_amount": round(loss_limit_amount, 8),
+        "max_daily_loss_percent": max_daily_loss_percent,
+        "daily_loss_limit_reached": daily_pnl <= -loss_limit_amount,
+        "consecutive_losses": consecutive_losses,
+        "max_consecutive_losses": max_consecutive_losses,
+        "consecutive_loss_limit_reached": consecutive_losses >= max_consecutive_losses,
+        "scope": "paper orders only; gross estimates excluding fees, spread, slippage and funding",
+    }
+
+
 def close_paper_order(order_id: str, close_price: float):
     with connection() as conn:
         row = conn.execute("SELECT * FROM paper_orders WHERE order_id = ?", (order_id,)).fetchone()
