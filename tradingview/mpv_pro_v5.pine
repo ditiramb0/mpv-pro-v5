@@ -1,0 +1,80 @@
+//@version=5
+strategy(
+     "MPV PRO V5 — Research Baseline",
+     overlay=true,
+     pyramiding=0,
+     calc_on_every_tick=false,
+     process_orders_on_close=true,
+     initial_capital=10000,
+     default_qty_type=strategy.fixed,
+     default_qty_value=1
+)
+
+// This Pine strategy is a research baseline. It does not guarantee profitability.
+// Keep the webhook secret private and use only letters/numbers in the secret input.
+marketInput = input.string("crypto", "Market", options=["crypto", "forex"])
+webhookSecret = input.string("", "Webhook secret (private)", confirm=true)
+riskPercent = input.float(1.0, "Risk per trade (%)", minval=0.1, maxval=5.0, step=0.1)
+minAdx = input.float(20.0, "Minimum ADX", minval=1.0, step=0.5)
+stopAtrMultiple = input.float(1.5, "Stop distance (ATR multiple)", minval=0.1, step=0.1)
+riskReward = input.float(3.0, "Reward / risk", minval=3.0, step=0.1)
+
+ema9 = ta.ema(close, 9)
+ema21 = ta.ema(close, 21)
+ema50 = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+rsi14 = ta.rsi(close, 14)
+[macdLine, macdSignal, _] = ta.macd(close, 12, 26, 9)
+[plusDI, minusDI, adx14] = ta.dmi(14, 14)
+atr14 = ta.atr(14)
+
+longSetup = ema9 > ema21 and ema21 > ema50 and ema50 > ema200 and macdLine > macdSignal and rsi14 >= 50 and rsi14 <= 70 and adx14 >= minAdx
+shortSetup = ema9 < ema21 and ema21 < ema50 and ema50 < ema200 and macdLine < macdSignal and rsi14 >= 30 and rsi14 <= 50 and adx14 >= minAdx
+
+// Signal only when the complete setup first becomes true; bar-close confirmation avoids intrabar repainting.
+buySignal = barstate.isconfirmed and longSetup and not longSetup[1]
+sellSignal = barstate.isconfirmed and shortSetup and not shortSetup[1]
+
+var float activeStop = na
+var float activeTarget = na
+var float activeAtrDistance = na
+
+if buySignal and atr14 > 0
+    entryPrice = close
+    activeAtrDistance := atr14 * stopAtrMultiple
+    activeStop := entryPrice - activeAtrDistance
+    activeTarget := entryPrice + activeAtrDistance * riskReward
+    riskCash = strategy.equity * riskPercent / 100.0
+    quantityEstimate = riskCash / activeAtrDistance
+    strategy.entry("Long", strategy.long, qty=quantityEstimate)
+    strategy.exit("Long SL/TP", from_entry="Long", stop=activeStop, limit=activeTarget)
+    signalId = syminfo.ticker + "_" + timeframe.period + "_" + str.tostring(time) + "_BUY"
+    alertMessage = '{"ticker":"' + syminfo.ticker + '","market":"' + marketInput + '","action":"BUY","timeframe":"' + timeframe.period + '","signal_id":"' + signalId + '","entry":' + str.tostring(entryPrice, format.mintick) + ',"stop_loss":' + str.tostring(activeStop, format.mintick) + ',"secret":"' + webhookSecret + '"}'
+    alert(alertMessage, alert.freq_once_per_bar_close)
+
+if sellSignal and atr14 > 0
+    entryPrice = close
+    activeAtrDistance := atr14 * stopAtrMultiple
+    activeStop := entryPrice + activeAtrDistance
+    activeTarget := entryPrice - activeAtrDistance * riskReward
+    riskCash = strategy.equity * riskPercent / 100.0
+    quantityEstimate = riskCash / activeAtrDistance
+    strategy.entry("Short", strategy.short, qty=quantityEstimate)
+    strategy.exit("Short SL/TP", from_entry="Short", stop=activeStop, limit=activeTarget)
+    signalId = syminfo.ticker + "_" + timeframe.period + "_" + str.tostring(time) + "_SELL"
+    alertMessage = '{"ticker":"' + syminfo.ticker + '","market":"' + marketInput + '","action":"SELL","timeframe":"' + timeframe.period + '","signal_id":"' + signalId + '","entry":' + str.tostring(entryPrice, format.mintick) + ',"stop_loss":' + str.tostring(activeStop, format.mintick) + ',"secret":"' + webhookSecret + '"}'
+    alert(alertMessage, alert.freq_once_per_bar_close)
+
+plot(ema9, "EMA 9")
+plot(ema21, "EMA 21")
+plot(ema50, "EMA 50")
+plot(ema200, "EMA 200")
+
+plotshape(buySignal, title="BUY", style=shape.labelup, location=location.belowbar, text="BUY", textcolor=color.white, color=color.green, size=size.tiny)
+plotshape(sellSignal, title="SELL", style=shape.labeldown, location=location.abovebar, text="SELL", textcolor=color.white, color=color.red, size=size.tiny)
+
+plot(strategy.position_size != 0 ? activeStop : na, "Active Stop", color=color.red, style=plot.style_linebr)
+plot(strategy.position_size != 0 ? activeTarget : na, "Active Target", color=color.green, style=plot.style_linebr)
+
+alertcondition(buySignal, title="MPV PRO V5 BUY", message="MPV PRO V5 BUY setup confirmed at bar close")
+alertcondition(sellSignal, title="MPV PRO V5 SELL", message="MPV PRO V5 SELL setup confirmed at bar close")
