@@ -1,6 +1,6 @@
 # MPV PRO V5
 
-MPV PRO V5 is a forex and cryptocurrency trading-research API. It supports candle retrieval through Twelve Data, indicator-based baseline signals, on-demand multi-timeframe signal evaluation, heuristic market-structure analysis, risk planning, historical candle backtests, Finnhub news sentiment, authenticated TradingView signal intake, and a persistent simulated paper-order ledger.
+MPV PRO V5 is a forex and cryptocurrency trading-research API. It supports candle retrieval through Twelve Data, indicator-based baseline signals, on-demand multi-timeframe signal evaluation, heuristic market-structure analysis, risk planning, historical candle backtests, Finnhub news sentiment, authenticated TradingView signal intake, a persistent simulated paper-order ledger, and paper-mode loss limits.
 
 **Current mode: research / paper-only. Live broker or exchange order execution is not implemented or enabled.** No strategy is guaranteed to be profitable.
 
@@ -9,14 +9,15 @@ MPV PRO V5 is a forex and cryptocurrency trading-research API. It supports candl
 - `GET /` and `GET /health`: service status and version.
 - `GET /timeframes/{style}`: profiles for `scalping`, `day_trading`, and `swing_trading`.
 - `GET /market-data/candles?ticker=EURUSD&market=forex&timeframe=1h&limit=220`: fetch completed OHLC candles from Twelve Data.
-- `GET /strategy/auto-evaluate?ticker=EURUSD&market=forex&style=day_trading`: fetch entry, confirmation, and context candles, evaluate all three, and return BUY/SELL only when the baseline signals agree; otherwise HOLD.
+- `GET /strategy/auto-evaluate?ticker=EURUSD&market=forex&style=day_trading`: fetch entry, confirmation, and context candles, evaluate all three, and return BUY/SELL only when the baseline signals agree; otherwise HOLD. When risk controls permit, it includes entry, stop-loss, take-profit, and estimated position size.
 - `GET /news/sentiment?ticker=BTCUSDT&market=crypto`: retrieve Finnhub category headlines and score them with a transparent keyword heuristic.
+- `GET /risk/status?equity=10000`: view emergency halt, daily realized P&L estimate, and consecutive-loss status.
 - `POST /risk/calculate`: stop-loss / take-profit planning with fixed 1:3 risk-to-reward.
 - `POST /strategy/evaluate`: EMA 9/21/50/200, RSI, MACD, ADX, Bollinger Bands, and ATR; returns a transparent baseline BUY/SELL/HOLD.
 - `POST /strategy/multi-timeframe`: evaluate separately supplied entry, confirmation, and context candle sets.
 - `POST /market-structure/analyze`: heuristic swing highs/lows, BOS/CHoCH events, fair-value gaps, simple order-block candidates, and liquidity sweeps.
 - `POST /backtest/run`: historical candle simulation with configurable proportional fee and slippage assumptions.
-- `POST /paper/orders`: create a persistent simulated order with a 1:3 target and estimated position size.
+- `POST /paper/orders`: create a persistent simulated order with a 1:3 target and estimated position size, subject to paper risk limits.
 - `GET /paper/orders`: list simulated orders.
 - `POST /paper/orders/{order_id}/close`: manually close a simulated order at a supplied price and estimate gross P&L.
 - `POST /webhook/tradingview`: authenticated signal intake with duplicate `signal_id` protection.
@@ -54,7 +55,17 @@ Twelve Data's Basic plan is listed as free with 8 API credits per minute and 800
 
 ## Automatic signal evaluation
 
-`/strategy/auto-evaluate` makes three candle requests using the selected style's entry, confirmation, and context profiles, evaluates the baseline on each timeframe, and returns a directional signal only if all three agree. It also includes heuristic market-structure output for the entry timeframe. It is on-demand, not a continuously running scanner, and it does not send orders. Provider limits apply; the default request uses three market-data API credits.
+`/strategy/auto-evaluate` makes three candle requests using the selected style's entry, confirmation, and context profiles, evaluates the baseline on each timeframe, and returns a directional signal only if all three agree. It also includes heuristic market-structure output for the entry timeframe. When aligned and risk controls are clear, it returns an estimated trade plan with a 1:3 target and position-size estimate. It is on-demand, not a continuously running scanner, and it does not send orders. Provider limits apply; the default request uses three market-data API credits.
+
+## Paper risk controls
+
+Set these environment variables:
+
+- `MAX_DAILY_LOSS_PERCENT=3`: block new paper orders after estimated realized losses reach this percentage of the equity supplied with the request.
+- `MAX_CONSECUTIVE_LOSSES=3`: block new paper orders after this many consecutive losing closed paper orders.
+- `EMERGENCY_HALT=true`: immediately block new paper orders and suppress trade plans from automatic signal evaluation.
+
+These controls only govern the paper ledger and estimated gross P&L. They are not a substitute for broker-side protections and do not govern any live trading, which is not implemented. The daily limit uses UTC calendar days; estimated P&L excludes costs.
 
 ## Trading styles
 
@@ -101,9 +112,10 @@ A Railway-compatible Docker configuration is included. The container listens on 
 Before deploying:
 1. Set `TRADINGVIEW_WEBHOOK_SECRET` to a long, random secret in the hosting provider's environment variables.
 2. Set `TWELVE_DATA_API_KEY` for candles and `FINNHUB_API_KEY` for news sentiment.
-3. Mount a persistent volume at `/data` and set `DATABASE_URL=sqlite:////data/mpv_pro_v5.db`. Without persistent storage, SQLite history may be lost when the service is replaced or redeployed.
-4. Keep live execution disabled.
-5. After deployment, verify `/health`, `/docs`, market-data availability, news-provider error handling, webhook authentication, duplicate-signal handling, and paper-order persistence.
+3. Set risk controls deliberately, and keep `EMERGENCY_HALT=false` only when you want paper orders enabled.
+4. Mount a persistent volume at `/data` and set `DATABASE_URL=sqlite:////data/mpv_pro_v5.db`. Without persistent storage, SQLite history may be lost when the service is replaced or redeployed.
+5. Keep live execution disabled.
+6. After deployment, verify `/health`, `/docs`, market-data availability, news-provider error handling, webhook authentication, duplicate-signal handling, paper-order persistence, and risk-limit blocking.
 
 Do not put secrets in the repository or Docker image. The `.dockerignore` excludes local environment files and database files from the image build context.
 
@@ -111,7 +123,7 @@ Do not put secrets in the repository or Docker image. The `.dockerignore` exclud
 
 - Verify the latest CI run, including tests and Docker image build.
 - Validate timestamp alignment and data freshness across multi-timeframe signals.
-- Add broker-specific adapters, protective-order verification, emergency halt, daily loss limits, and operational monitoring.
+- Add broker-specific adapters, broker-side protective-order verification, and operational monitoring.
 - Run realistic out-of-sample backtests and paper-trade for an extended period.
 - Configure hosting, persistent storage, secrets, and uptime monitoring.
 
