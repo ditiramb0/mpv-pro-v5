@@ -1,6 +1,6 @@
 # MPV PRO V5
 
-MPV PRO V5 is a forex and cryptocurrency trading-research API. It supports indicator-based baseline signals, multi-timeframe direction checks, heuristic market-structure analysis, risk planning, historical candle backtests, Finnhub news sentiment, authenticated TradingView signal intake, and a persistent simulated paper-order ledger.
+MPV PRO V5 is a forex and cryptocurrency trading-research API. It supports candle retrieval through Twelve Data, indicator-based baseline signals, multi-timeframe direction checks, heuristic market-structure analysis, risk planning, historical candle backtests, Finnhub news sentiment, authenticated TradingView signal intake, and a persistent simulated paper-order ledger.
 
 **Current mode: research / paper-only. Live broker or exchange order execution is not implemented or enabled.** No strategy is guaranteed to be profitable.
 
@@ -8,6 +8,7 @@ MPV PRO V5 is a forex and cryptocurrency trading-research API. It supports indic
 
 - `GET /` and `GET /health`: service status and version.
 - `GET /timeframes/{style}`: profiles for `scalping`, `day_trading`, and `swing_trading`.
+- `GET /market-data/candles?ticker=EURUSD&market=forex&timeframe=1h&limit=220`: fetch completed OHLC candles from Twelve Data.
 - `GET /news/sentiment?ticker=BTCUSDT&market=crypto`: retrieve Finnhub category headlines and score them with a transparent keyword heuristic.
 - `POST /risk/calculate`: stop-loss / take-profit planning with fixed 1:3 risk-to-reward.
 - `POST /strategy/evaluate`: EMA 9/21/50/200, RSI, MACD, ADX, Bollinger Bands, and ATR; returns a transparent baseline BUY/SELL/HOLD.
@@ -32,7 +33,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Set a unique `TRADINGVIEW_WEBHOOK_SECRET` in `.env`. To enable news sentiment, set `FINNHUB_API_KEY` using a key from your Finnhub account. Keep both secrets out of source control. Then run:
+Set a unique `TRADINGVIEW_WEBHOOK_SECRET` in `.env`. Set `TWELVE_DATA_API_KEY` to enable market-data candles and `FINNHUB_API_KEY` to enable news sentiment. Keep all secrets out of source control. Then run:
 
 ```bash
 uvicorn app.main:app --reload
@@ -43,6 +44,12 @@ Open `/docs` on the local server to explore and call the API. Run tests with:
 ```bash
 python -m pytest -q
 ```
+
+## Market-data notes
+
+Twelve Data is used for both forex and crypto candles. The API converts common tickers such as `EURUSD` to `EUR/USD` and `BTCUSDT` to `BTC/USDT`, requests UTC timestamps, validates OHLC values, sorts candles chronologically, and excludes candles whose interval has not finished. Some symbols or history depths may not be available on every plan.
+
+Twelve Data's Basic plan is listed as free with 8 API credits per minute and 800 per day, and includes real-time forex and crypto data for supported symbols. Verify current provider limits and licensing before use; the free plan is for internal/non-display use, not public redistribution. See the official [Twelve Data pricing page](https://twelvedata.com/pricing) and [API documentation](https://twelvedata.com/docs).
 
 ## Trading styles
 
@@ -56,7 +63,7 @@ These are configuration profiles, not evidence of strategy performance. Scalping
 
 The baseline requires aligned EMAs, MACD direction, an RSI range, and ADX trend strength. It returns BUY, SELL, or HOLD and an ATR-based stop/target distance at 1:3. Bollinger Bands are calculated as context but are not currently a signal condition.
 
-The multi-timeframe endpoint expects three separately supplied, chronological candle arrays for the same instrument. It does **not** resample candles, fetch market data, or verify timestamps/freshness. Supply correctly aligned datasets. All three signal directions must agree before it returns BUY or SELL.
+The multi-timeframe endpoint expects three separately supplied, chronological candle arrays for the same instrument. It does **not** resample candles or verify timestamps/freshness. Supply correctly aligned datasets. All three signal directions must agree before it returns BUY or SELL.
 
 ## News sentiment notes
 
@@ -88,17 +95,17 @@ A Railway-compatible Docker configuration is included. The container listens on 
 
 Before deploying:
 1. Set `TRADINGVIEW_WEBHOOK_SECRET` to a long, random secret in the hosting provider's environment variables.
-2. Set `FINNHUB_API_KEY` if news sentiment is required.
+2. Set `TWELVE_DATA_API_KEY` for candles and `FINNHUB_API_KEY` for news sentiment.
 3. Mount a persistent volume at `/data` and set `DATABASE_URL=sqlite:////data/mpv_pro_v5.db`. Without persistent storage, SQLite history may be lost when the service is replaced or redeployed.
 4. Keep live execution disabled.
-5. After deployment, verify `/health`, `/docs`, webhook authentication, duplicate-signal handling, paper-order persistence, and news-provider error handling.
+5. After deployment, verify `/health`, `/docs`, market-data availability, news-provider error handling, webhook authentication, duplicate-signal handling, and paper-order persistence.
 
 Do not put secrets in the repository or Docker image. The `.dockerignore` excludes local environment files and database files from the image build context.
 
 ## Remaining before a production-ready system
 
 - Verify the latest CI run, including tests and Docker image build.
-- Add an approved market-data source, timestamp validation, and scheduled refresh.
+- Validate timestamp alignment and data freshness across multi-timeframe signals.
 - Add broker-specific adapters, protective-order verification, emergency halt, daily loss limits, and operational monitoring.
 - Run realistic out-of-sample backtests and paper-trade for an extended period.
 - Configure hosting, persistent storage, secrets, and uptime monitoring.
