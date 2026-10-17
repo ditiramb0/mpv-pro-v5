@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 from contextlib import asynccontextmanager
 from typing import Literal
+from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
@@ -12,7 +13,15 @@ from app.backtest import run_backtest
 from app.timeframes import get_timeframe_profile
 from app.indicators import calculate_indicators
 from app.market_structure import analyze_market_structure
-from app.storage import initialize_database, recent_signals, save_signal
+from app.storage import (
+    close_paper_order,
+    get_paper_order,
+    initialize_database,
+    recent_paper_orders,
+    recent_signals,
+    save_paper_order,
+    save_signal,
+)
 from app.strategy import evaluate_trend
 
 
@@ -24,9 +33,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="MPV PRO V5",
-    version="0.4.0",
+    version="0.5.0",
     description="Forex and crypto signal research API. Live orders are disabled.",
-    lifespan=lifespan,
 )
 
 
@@ -44,6 +52,16 @@ class RiskRequest(BaseModel):
         if self.side == "SELL" and self.stop_loss <= self.entry:
             raise ValueError("For SELL, stop_loss must be above entry.")
         return self
+
+
+class PaperOrderRequest(RiskRequest):
+    ticker: str = Field(min_length=1, max_length=40)
+    market: Literal["forex", "crypto"]
+    client_order_id: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class ClosePaperOrderRequest(BaseModel):
+    close_price: float = Field(gt=0)
 
 
 class TradingViewSignal(BaseModel):
@@ -139,6 +157,69 @@ def calculate_risk(request: RiskRequest):
         "risk_percent": request.risk_percent,
         "quantity_estimate": round(quantity_estimate, 8),
         "note": "Estimate only; adapt quantity for the instrument's contract specifications, account currency, and trading costs.",
+    }
+
+
+@app.post("/paper/orders")
+def create_paper_order(request: PaperOrderRequest):
+    risk_distance = abs(request.entry - request.stop_loss)
+    risk_amount = request.equity * request.risk_percent / 100.0
+    quantity_estimate = risk_amount / risk_distance
+    target_distance = risk_distance * 3.0
+    take_profit = request.entry + target_distance if request.side == "BUY" else request.entry - target_distance
+    order_id = request.client_order_id or uuid4().hex
+    order = {
+        "order_id": order_id,
+        "ticker": request.ticker.upper(),
+        "market": request.market,
+        "side": request.side,
+        "entry": request.entry,
+        "stop_loss": request.stop_loss,
+        "take_profit": take_profit,
+        "equity": request.equity,
+        "risk_percent": request.risk_percent,
+        "risk_amount": risk_amount,
+        "quantity_estimate": quantity_estimate,
+    }
+    try:
+        inserted = save_paper_order(order)
+        stored = get_paper_order(order_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "created": inserted,
+        "duplicate": not inserted,
+        "order": stored,
+        "mode": "paper_only",
+        "live_execution_enabled": False,
+        "warning": "This is a simulated order ledger. It does not monitor live prices, trigger stops/targets, or send orders to a broker. Quantity is an estimate and excludes contract multipliers and trading costs.",
+    }
+
+
+@app.get("/paper/orders")
+def list_paper_orders(limit: int = Query(default=50, ge=1, le=200)):
+    return {
+        "orders": recent_paper_orders(limit=limit),
+        "mode": "paper_only",
+        "live_execution_enabled": False,
+    }
+
+
+@app.post("/paper/orders/{order_id}/close")
+def finish_paper_order(order_id: str, request: ClosePaperOrderRequest):
+    try:
+        status, order = close_paper_order(order_id, request.close_price)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if status == "not_found":
+        raise HTTPException(status_code=404, detail="Paper order not found.")
+    if status == "already_closed":
+        raise HTTPException(status_code=409, detail="Paper order is already closed.")
+    return {
+        "order": order,
+        "mode": "paper_only",
+        "live_execution_enabled": False,
+        "pnl_note": "Estimated gross P&L only; fees, spread, slippage, funding and contract specifications are not included.",
     }
 
 
