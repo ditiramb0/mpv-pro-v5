@@ -13,15 +13,7 @@ from app.backtest import run_backtest
 from app.timeframes import get_timeframe_profile
 from app.indicators import calculate_indicators
 from app.market_structure import analyze_market_structure
-from app.storage import (
-    close_paper_order,
-    get_paper_order,
-    initialize_database,
-    recent_paper_orders,
-    recent_signals,
-    save_paper_order,
-    save_signal,
-)
+from app.storage import close_paper_order, get_paper_order, initialize_database, recent_paper_orders, recent_signals, save_paper_order, save_signal
 from app.strategy import evaluate_trend
 
 
@@ -33,8 +25,9 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="MPV PRO V5",
-    version="0.5.0",
+    version="0.5.2",
     description="Forex and crypto signal research API. Live orders are disabled.",
+    lifespan=lifespan,
 )
 
 
@@ -125,14 +118,9 @@ class MultiTimeframeRequest(BaseModel):
 
 @app.get("/")
 def root():
-    return {
-        "name": "MPV PRO V5",
-        "status": "running",
-        "version": app.version,
-        "supported_markets": ["forex", "crypto"],
-        "mode": "paper_only",
-        "live_execution_enabled": False,
-    }
+    return {"name": "MPV PRO V5", "status": "running", "version": app.version,
+            "supported_markets": ["forex", "crypto"], "mode": "paper_only",
+            "live_execution_enabled": False}
 
 
 @app.get("/health")
@@ -147,17 +135,11 @@ def calculate_risk(request: RiskRequest):
     take_profit = request.entry + take_profit_distance if request.side == "BUY" else request.entry - take_profit_distance
     risk_amount = request.equity * request.risk_percent / 100.0
     quantity_estimate = risk_amount / risk_distance
-    return {
-        "side": request.side,
-        "entry": request.entry,
-        "stop_loss": request.stop_loss,
-        "take_profit": take_profit,
-        "risk_reward_ratio": "1:3",
-        "risk_amount": round(risk_amount, 8),
-        "risk_percent": request.risk_percent,
-        "quantity_estimate": round(quantity_estimate, 8),
-        "note": "Estimate only; adapt quantity for the instrument's contract specifications, account currency, and trading costs.",
-    }
+    return {"side": request.side, "entry": request.entry, "stop_loss": request.stop_loss,
+            "take_profit": take_profit, "risk_reward_ratio": "1:3",
+            "risk_amount": round(risk_amount, 8), "risk_percent": request.risk_percent,
+            "quantity_estimate": round(quantity_estimate, 8),
+            "note": "Estimate only; adapt quantity for the instrument's contract specifications, account currency, and trading costs."}
 
 
 @app.post("/paper/orders")
@@ -168,41 +150,23 @@ def create_paper_order(request: PaperOrderRequest):
     target_distance = risk_distance * 3.0
     take_profit = request.entry + target_distance if request.side == "BUY" else request.entry - target_distance
     order_id = request.client_order_id or uuid4().hex
-    order = {
-        "order_id": order_id,
-        "ticker": request.ticker.upper(),
-        "market": request.market,
-        "side": request.side,
-        "entry": request.entry,
-        "stop_loss": request.stop_loss,
-        "take_profit": take_profit,
-        "equity": request.equity,
-        "risk_percent": request.risk_percent,
-        "risk_amount": risk_amount,
-        "quantity_estimate": quantity_estimate,
-    }
+    order = {"order_id": order_id, "ticker": request.ticker.upper(), "market": request.market,
+             "side": request.side, "entry": request.entry, "stop_loss": request.stop_loss,
+             "take_profit": take_profit, "equity": request.equity, "risk_percent": request.risk_percent,
+             "risk_amount": risk_amount, "quantity_estimate": quantity_estimate}
     try:
         inserted = save_paper_order(order)
         stored = get_paper_order(order_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {
-        "created": inserted,
-        "duplicate": not inserted,
-        "order": stored,
-        "mode": "paper_only",
-        "live_execution_enabled": False,
-        "warning": "This is a simulated order ledger. It does not monitor live prices, trigger stops/targets, or send orders to a broker. Quantity is an estimate and excludes contract multipliers and trading costs.",
-    }
+    return {"created": inserted, "duplicate": not inserted, "order": stored, "mode": "paper_only",
+            "live_execution_enabled": False,
+            "warning": "Simulated ledger only: it does not monitor live prices, trigger stops/targets, or send broker orders. Quantity is an estimate and excludes contract multipliers and trading costs."}
 
 
 @app.get("/paper/orders")
 def list_paper_orders(limit: int = Query(default=50, ge=1, le=200)):
-    return {
-        "orders": recent_paper_orders(limit=limit),
-        "mode": "paper_only",
-        "live_execution_enabled": False,
-    }
+    return {"orders": recent_paper_orders(limit=limit), "mode": "paper_only", "live_execution_enabled": False}
 
 
 @app.post("/paper/orders/{order_id}/close")
@@ -215,84 +179,53 @@ def finish_paper_order(order_id: str, request: ClosePaperOrderRequest):
         raise HTTPException(status_code=404, detail="Paper order not found.")
     if status == "already_closed":
         raise HTTPException(status_code=409, detail="Paper order is already closed.")
-    return {
-        "order": order,
-        "mode": "paper_only",
-        "live_execution_enabled": False,
-        "pnl_note": "Estimated gross P&L only; fees, spread, slippage, funding and contract specifications are not included.",
-    }
+    return {"order": order, "mode": "paper_only", "live_execution_enabled": False,
+            "pnl_note": "Estimated gross P&L only; fees, spread, slippage, funding and contract specifications are not included."}
 
 
 @app.post("/strategy/evaluate")
 def strategy_evaluate(request: StrategyRequest):
-    candles = [c.model_dump() for c in request.candles]
     try:
-        indicators = calculate_indicators(candles)
+        indicators = calculate_indicators([c.model_dump() for c in request.candles])
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     result = evaluate_trend(indicators)
-    return {
-        "market": request.market,
-        "ticker": request.ticker,
-        "timeframe": request.timeframe,
-        "close": indicators.close,
-        "indicators": indicators.__dict__,
-        "signal": result,
-        "live_execution_enabled": False,
-    }
+    return {"market": request.market, "ticker": request.ticker, "timeframe": request.timeframe,
+            "close": indicators.close, "indicators": indicators.__dict__, "signal": result,
+            "live_execution_enabled": False}
 
 
 @app.post("/market-structure/analyze")
 def market_structure_analyze(request: MarketStructureRequest):
     try:
-        result = analyze_market_structure(
-            [c.model_dump() for c in request.candles],
-            swing_window=request.swing_window,
-            max_patterns=request.max_patterns,
-        )
+        result = analyze_market_structure([c.model_dump() for c in request.candles],
+                                          swing_window=request.swing_window, max_patterns=request.max_patterns)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {
-        "market": request.market,
-        "ticker": request.ticker,
-        "timeframe": request.timeframe,
-        "analysis": result,
-        "live_execution_enabled": False,
-    }
+    return {"market": request.market, "ticker": request.ticker, "timeframe": request.timeframe,
+            "analysis": result, "live_execution_enabled": False}
 
 
 @app.post("/strategy/multi-timeframe")
 def strategy_multi_timeframe(request: MultiTimeframeRequest):
-    datasets = {
-        "entry": (request.entry_timeframe, request.entry_candles),
-        "confirmation": (request.confirmation_timeframe, request.confirmation_candles),
-        "context": (request.context_timeframe, request.context_candles),
-    }
+    datasets = {"entry": (request.entry_timeframe, request.entry_candles),
+                "confirmation": (request.confirmation_timeframe, request.confirmation_candles),
+                "context": (request.context_timeframe, request.context_candles)}
     evaluations = {}
     try:
         for role, (timeframe, candles) in datasets.items():
             snapshot = calculate_indicators([c.model_dump() for c in candles])
-            evaluations[role] = {
-                "timeframe": timeframe,
-                "close": snapshot.close,
-                "indicators": snapshot.__dict__,
-                "signal": evaluate_trend(snapshot),
-            }
+            evaluations[role] = {"timeframe": timeframe, "close": snapshot.close,
+                                 "indicators": snapshot.__dict__, "signal": evaluate_trend(snapshot)}
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-
     actions = [evaluations[role]["signal"]["action"] for role in ("entry", "confirmation", "context")]
     aligned = actions[0] in ("BUY", "SELL") and actions.count(actions[0]) == len(actions)
-    return {
-        "market": request.market,
-        "ticker": request.ticker,
-        "evaluations": evaluations,
-        "alignment": "aligned" if aligned else "mixed_or_no_signal",
-        "signal": actions[0] if aligned else "HOLD",
-        "risk_reward_ratio": "1:3",
-        "live_execution_enabled": False,
-        "warning": "All three supplied datasets must be correctly timestamp-aligned and use the same instrument. This endpoint checks signal direction only; it does not resample candles or verify timestamp freshness.",
-    }
+    return {"market": request.market, "ticker": request.ticker, "evaluations": evaluations,
+            "alignment": "aligned" if aligned else "mixed_or_no_signal",
+            "signal": actions[0] if aligned else "HOLD", "risk_reward_ratio": "1:3",
+            "live_execution_enabled": False,
+            "warning": "Supply correctly timestamp-aligned datasets for the same instrument. This endpoint checks direction only; it does not resample candles or verify timestamp freshness."}
 
 
 @app.get("/timeframes/{style}")
@@ -303,11 +236,8 @@ def timeframe_profile(style: Literal["scalping", "day_trading", "swing_trading"]
 @app.post("/backtest/run")
 def backtest_run(request: BacktestRequest):
     try:
-        result = run_backtest(
-            [c.model_dump() for c in request.candles],
-            fee_rate=request.fee_rate,
-            slippage_rate=request.slippage_rate,
-        )
+        result = run_backtest([c.model_dump() for c in request.candles],
+                              fee_rate=request.fee_rate, slippage_rate=request.slippage_rate)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     result.update({"market": request.market, "ticker": request.ticker, "timeframe": request.timeframe})
@@ -315,10 +245,7 @@ def backtest_run(request: BacktestRequest):
 
 
 @app.post("/webhook/tradingview")
-def tradingview_webhook(
-    signal: TradingViewSignal,
-    x_mpv_webhook_secret: str | None = Header(default=None),
-):
+def tradingview_webhook(signal: TradingViewSignal, x_mpv_webhook_secret: str | None = Header(default=None)):
     expected = settings.tradingview_webhook_secret
     if not expected:
         raise HTTPException(status_code=503, detail="Webhook secret is not configured.")
@@ -328,17 +255,9 @@ def tradingview_webhook(
         inserted = save_signal(signal)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {
-        "accepted": True,
-        "duplicate": not inserted,
-        "signal_id": signal.signal_id,
-        "ticker": signal.ticker,
-        "market": signal.market,
-        "action": signal.action,
-        "timeframe": signal.timeframe,
-        "execution": "disabled",
-        "mode": "paper_only",
-    }
+    return {"accepted": True, "duplicate": not inserted, "signal_id": signal.signal_id,
+            "ticker": signal.ticker, "market": signal.market, "action": signal.action,
+            "timeframe": signal.timeframe, "execution": "disabled", "mode": "paper_only"}
 
 
 @app.get("/signals")
