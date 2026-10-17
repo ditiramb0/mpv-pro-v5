@@ -30,7 +30,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="MPV PRO V5",
-    version="0.9.0",
+    version="0.9.1",
     description="Forex and crypto signal research API. Live orders are disabled.",
     lifespan=lifespan,
 )
@@ -70,6 +70,7 @@ class TradingViewSignal(BaseModel):
     entry: float | None = Field(default=None, gt=0)
     stop_loss: float | None = Field(default=None, gt=0)
     signal_id: str = Field(min_length=1, max_length=120)
+    secret: str | None = Field(default=None, max_length=200)
 
 
 class Candle(BaseModel):
@@ -420,9 +421,10 @@ def backtest_run(request: BacktestRequest):
 @app.post("/webhook/tradingview")
 def tradingview_webhook(signal: TradingViewSignal, x_mpv_webhook_secret: str | None = Header(default=None)):
     expected = settings.tradingview_webhook_secret
+    supplied_secret = x_mpv_webhook_secret if x_mpv_webhook_secret is not None else signal.secret
     if not expected:
         raise HTTPException(status_code=503, detail="Webhook secret is not configured.")
-    if not x_mpv_webhook_secret or not hmac.compare_digest(x_mpv_webhook_secret, expected):
+    if not supplied_secret or not hmac.compare_digest(supplied_secret, expected):
         raise HTTPException(status_code=401, detail="Invalid webhook secret.")
     try:
         inserted = save_signal(signal)
