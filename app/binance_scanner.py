@@ -70,7 +70,7 @@ async def scan_binance_demo(symbols: list[str] | None = None) -> dict[str, Any]:
                 sig1, sig4 = evaluate_trend(h), evaluate_trend(h4)
                 change_24h = (hourly[-1]["close"] / hourly[-25]["close"] - 1) * 100
                 aligned = sig1["action"] == sig4["action"] and sig1["action"] in ("BUY", "SELL")
-                score = (2 if aligned else 0) + (1 if h.close > h.ema200 else 0) + max(-1, min(1, change_24h / 10))
+                score = (2 if aligned and sig1["action"] == "BUY" else -2 if aligned and sig1["action"] == "SELL" else 0) + (1 if h.close > h.ema200 else -1) + max(-1, min(1, change_24h / 10))
                 results.append({
                     "symbol": symbol, "price": h.close,
                     "change_24h_percent": round(change_24h, 3),
