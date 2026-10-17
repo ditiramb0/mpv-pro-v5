@@ -18,7 +18,7 @@ from app.indicators import calculate_indicators
 from app.market_structure import analyze_market_structure
 from app.market_data import fetch_candles
 from app.news import fetch_news_sentiment
-from app.storage import close_paper_order, get_paper_order, initialize_database, recent_paper_orders, recent_signals, save_paper_order, save_signal
+from app.storage import close_paper_order, get_paper_order, initialize_database, paper_risk_state, recent_paper_orders, recent_signals, save_paper_order, save_signal
 from app.strategy import evaluate_trend
 
 
@@ -30,7 +30,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="MPV PRO V5",
-    version="0.8.0",
+    version="0.9.0",
     description="Forex and crypto signal research API. Live orders are disabled.",
     lifespan=lifespan,
 )
@@ -122,6 +122,14 @@ class MultiTimeframeRequest(BaseModel):
     context_candles: list[Candle] = Field(min_length=220, max_length=5000)
 
 
+def current_paper_risk_state(equity: float) -> dict:
+    return paper_risk_state(
+        equity=equity,
+        max_daily_loss_percent=settings.max_daily_loss_percent,
+        max_consecutive_losses=settings.max_consecutive_losses,
+    )
+
+
 @app.get("/")
 def root():
     return {"name": "MPV PRO V5", "status": "running", "version": app.version,
@@ -132,6 +140,25 @@ def root():
 @app.get("/health")
 def health():
     return {"ok": True, "version": app.version}
+
+
+@app.get("/risk/status")
+def risk_status(equity: float = Query(default=10000, gt=0)):
+    try:
+        state = current_paper_risk_state(equity)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    halted = settings.emergency_halt or state["daily_loss_limit_reached"] or state["consecutive_loss_limit_reached"]
+    return {
+        "mode": "paper_only",
+        "emergency_halt": settings.emergency_halt,
+        "new_paper_orders_blocked": halted,
+        "block_reason": "emergency_halt" if settings.emergency_halt else
+            "daily_loss_limit" if state["daily_loss_limit_reached"] else
+            "consecutive_loss_limit" if state["consecutive_loss_limit_reached"] else None,
+        "risk_state": state,
+        "live_execution_enabled": False,
+    }
 
 
 @app.get("/market-data/candles")
@@ -160,6 +187,8 @@ async def strategy_auto_evaluate(
     ticker: str = Query(min_length=1, max_length=40),
     market: Literal["forex", "crypto"] = Query(),
     style: Literal["scalping", "day_trading", "swing_trading"] = Query(default="day_trading"),
+    equity: float = Query(default=10000, gt=0),
+    risk_percent: float = Query(default=1.0, gt=0, le=5),
 ):
     profile = get_timeframe_profile(style)
     timeframes = {
@@ -182,8 +211,8 @@ async def strategy_auto_evaluate(
                 "signal": evaluate_trend(snapshot),
                 "candle_count": data["count"],
             }
-        entry_candles = fetched[0]["candles"]
-        structure = analyze_market_structure(entry_candles)
+        structure = analyze_market_structure(fetched[0]["candles"])
+        risk_state = current_paper_risk_state(equity)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except httpx.TimeoutException as exc:
@@ -197,6 +226,28 @@ async def strategy_auto_evaluate(
 
     actions = [evaluations[role]["signal"]["action"] for role in ("entry", "confirmation", "context")]
     aligned = actions[0] in ("BUY", "SELL") and actions.count(actions[0]) == 3
+    halted = settings.emergency_halt or risk_state["daily_loss_limit_reached"] or risk_state["consecutive_loss_limit_reached"]
+    trade_plan = None
+    if aligned and not halted:
+        entry = evaluations["entry"]["close"]
+        stop_distance = evaluations["entry"]["signal"]["stop_loss_distance"]
+        target_distance = evaluations["entry"]["signal"]["take_profit_distance"]
+        side = actions[0]
+        stop_loss = entry - stop_distance if side == "BUY" else entry + stop_distance
+        take_profit = entry + target_distance if side == "BUY" else entry - target_distance
+        risk_amount = equity * risk_percent / 100.0
+        trade_plan = {
+            "side": side,
+            "entry": entry,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "risk_reward_ratio": "1:3",
+            "equity_assumption": equity,
+            "risk_percent": risk_percent,
+            "risk_amount_estimate": risk_amount,
+            "quantity_estimate": risk_amount / stop_distance if stop_distance > 0 else None,
+            "note": "Sizing estimate only; contract multipliers, pip/tick value, account currency, fees and slippage are not modelled.",
+        }
     return {
         "ticker": ticker.upper(),
         "market": market,
@@ -204,6 +255,12 @@ async def strategy_auto_evaluate(
         "evaluations": evaluations,
         "alignment": "aligned" if aligned else "mixed_or_no_signal",
         "signal": actions[0] if aligned else "HOLD",
+        "trade_plan": trade_plan,
+        "risk_controls": {
+            "trading_halted": halted,
+            "emergency_halt": settings.emergency_halt,
+            "risk_state": risk_state,
+        },
         "risk_reward_ratio": "1:3",
         "market_structure": structure,
         "live_execution_enabled": False,
@@ -251,13 +308,28 @@ def create_paper_order(request: PaperOrderRequest):
     target_distance = risk_distance * 3.0
     take_profit = request.entry + target_distance if request.side == "BUY" else request.entry - target_distance
     order_id = request.client_order_id or uuid4().hex
-    order = {"order_id": order_id, "ticker": request.ticker.upper(), "market": request.market,
-             "side": request.side, "entry": request.entry, "stop_loss": request.stop_loss,
-             "take_profit": take_profit, "equity": request.equity, "risk_percent": request.risk_percent,
-             "risk_amount": risk_amount, "quantity_estimate": quantity_estimate}
     try:
+        if request.client_order_id:
+            existing = get_paper_order(order_id)
+            if existing:
+                return {"created": False, "duplicate": True, "order": existing, "mode": "paper_only",
+                        "live_execution_enabled": False}
+        if settings.emergency_halt:
+            raise HTTPException(status_code=423, detail="Emergency halt is active; new paper orders are blocked.")
+        state = current_paper_risk_state(request.equity)
+        if state["daily_loss_limit_reached"] or state["consecutive_loss_limit_reached"]:
+            raise HTTPException(status_code=409, detail={
+                "message": "Paper risk limit reached; new orders are blocked.",
+                "risk_state": state,
+            })
+        order = {"order_id": order_id, "ticker": request.ticker.upper(), "market": request.market,
+                 "side": request.side, "entry": request.entry, "stop_loss": request.stop_loss,
+                 "take_profit": take_profit, "equity": request.equity, "risk_percent": request.risk_percent,
+                 "risk_amount": risk_amount, "quantity_estimate": quantity_estimate}
         inserted = save_paper_order(order)
         stored = get_paper_order(order_id)
+    except HTTPException:
+        raise
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"created": inserted, "duplicate": not inserted, "order": stored, "mode": "paper_only",
