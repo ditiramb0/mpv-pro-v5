@@ -1,3 +1,5 @@
+import math
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -8,11 +10,11 @@ from app.market_structure import analyze_market_structure
 def rising_candles(count=240):
     candles = []
     for i in range(count):
-        close = 100 + i * 0.2
+        close = 100 + i * 0.2 + 1.5 * math.sin(i * 0.5)
         candles.append({
             "open": close - 0.05,
-            "high": close + 0.2,
-            "low": close - 0.2,
+            "high": close + 0.25,
+            "low": close - 0.25,
             "close": close,
         })
     return candles
@@ -21,11 +23,11 @@ def rising_candles(count=240):
 def falling_candles(count=240):
     candles = []
     for i in range(count):
-        close = 200 - i * 0.2
+        close = 200 - i * 0.2 - 1.5 * math.sin(i * 0.5)
         candles.append({
             "open": close + 0.05,
-            "high": close + 0.2,
-            "low": close - 0.2,
+            "high": close + 0.25,
+            "low": close - 0.25,
             "close": close,
         })
     return candles
