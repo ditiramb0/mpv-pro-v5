@@ -52,7 +52,7 @@ python -m pytest -q
 
 `GET /kraken/rotation-scan` reads public Kraken Spot OHLC data without credentials, ranks the configured pairs using completed 1h/4h candles, and reports research signals only. Use Kraken pair notation such as `XBT/USD` and verify current supported pair names with Kraken's AssetPairs endpoint. Kraken's OHLC endpoint returns a limited recent window; the scanner fails closed for a pair/timeframe if fewer than 220 completed candles are available. This endpoint is not a derivatives demo account, does not check a user's product eligibility, and never places orders.
 
-The active rotation-scan API route is Kraken Spot and is read-only. The retired Binance-only scanner modules, report script, endpoint test, and scheduled workflow have been removed from this branch. This does not enable exchange order execution.
+The active rotation-scan API route uses Kraken Spot public market data and is read-only. No exchange order execution is enabled.
 
 ## Market-data notes
 
