@@ -11,20 +11,24 @@ from app.config import settings
 from app.backtest import run_backtest
 from app.timeframes import get_timeframe_profile
 from app.indicators import calculate_indicators
+from app.market_structure import analyze_market_structure
 from app.storage import initialize_database, recent_signals, save_signal
 from app.strategy import evaluate_trend
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initialize_database()
     yield
 
+
 app = FastAPI(
     title="MPV PRO V5",
-    version="0.3.0",
+    version="0.4.0",
     description="Forex and crypto signal research API. Live orders are disabled.",
     lifespan=lifespan,
 )
+
 
 class RiskRequest(BaseModel):
     side: Literal["BUY", "SELL"]
@@ -41,6 +45,7 @@ class RiskRequest(BaseModel):
             raise ValueError("For SELL, stop_loss must be above entry.")
         return self
 
+
 class TradingViewSignal(BaseModel):
     ticker: str = Field(min_length=1, max_length=40)
     market: Literal["forex", "crypto"]
@@ -49,6 +54,7 @@ class TradingViewSignal(BaseModel):
     entry: float | None = Field(default=None, gt=0)
     stop_loss: float | None = Field(default=None, gt=0)
     signal_id: str = Field(min_length=1, max_length=120)
+
 
 class Candle(BaseModel):
     open: float = Field(gt=0)
@@ -62,6 +68,7 @@ class Candle(BaseModel):
             raise ValueError("Invalid OHLC candle: require low <= open/close <= high.")
         return self
 
+
 class BacktestRequest(BaseModel):
     market: Literal["forex", "crypto"]
     ticker: str = Field(min_length=1, max_length=40)
@@ -70,25 +77,50 @@ class BacktestRequest(BaseModel):
     fee_rate: float = Field(default=0.0005, ge=0, le=0.02)
     slippage_rate: float = Field(default=0.0002, ge=0, le=0.02)
 
+
 class StrategyRequest(BaseModel):
     market: Literal["forex", "crypto"]
     ticker: str = Field(min_length=1, max_length=40)
     timeframe: str = Field(min_length=1, max_length=20)
     candles: list[Candle] = Field(min_length=220, max_length=5000)
 
+
+class MarketStructureRequest(BaseModel):
+    market: Literal["forex", "crypto"]
+    ticker: str = Field(min_length=1, max_length=40)
+    timeframe: str = Field(min_length=1, max_length=20)
+    candles: list[Candle] = Field(min_length=15, max_length=5000)
+    swing_window: int = Field(default=3, ge=1, le=10)
+    max_patterns: int = Field(default=10, ge=1, le=50)
+
+
+class MultiTimeframeRequest(BaseModel):
+    market: Literal["forex", "crypto"]
+    ticker: str = Field(min_length=1, max_length=40)
+    entry_timeframe: str = Field(min_length=1, max_length=20)
+    confirmation_timeframe: str = Field(min_length=1, max_length=20)
+    context_timeframe: str = Field(min_length=1, max_length=20)
+    entry_candles: list[Candle] = Field(min_length=220, max_length=5000)
+    confirmation_candles: list[Candle] = Field(min_length=220, max_length=5000)
+    context_candles: list[Candle] = Field(min_length=220, max_length=5000)
+
+
 @app.get("/")
 def root():
     return {
         "name": "MPV PRO V5",
         "status": "running",
+        "version": app.version,
         "supported_markets": ["forex", "crypto"],
         "mode": "paper_only",
         "live_execution_enabled": False,
     }
 
+
 @app.get("/health")
 def health():
     return {"ok": True, "version": app.version}
+
 
 @app.post("/risk/calculate")
 def calculate_risk(request: RiskRequest):
@@ -109,6 +141,7 @@ def calculate_risk(request: RiskRequest):
         "note": "Estimate only; adapt quantity for the instrument's contract specifications, account currency, and trading costs.",
     }
 
+
 @app.post("/strategy/evaluate")
 def strategy_evaluate(request: StrategyRequest):
     candles = [c.model_dump() for c in request.candles]
@@ -127,9 +160,64 @@ def strategy_evaluate(request: StrategyRequest):
         "live_execution_enabled": False,
     }
 
+
+@app.post("/market-structure/analyze")
+def market_structure_analyze(request: MarketStructureRequest):
+    try:
+        result = analyze_market_structure(
+            [c.model_dump() for c in request.candles],
+            swing_window=request.swing_window,
+            max_patterns=request.max_patterns,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "market": request.market,
+        "ticker": request.ticker,
+        "timeframe": request.timeframe,
+        "analysis": result,
+        "live_execution_enabled": False,
+    }
+
+
+@app.post("/strategy/multi-timeframe")
+def strategy_multi_timeframe(request: MultiTimeframeRequest):
+    datasets = {
+        "entry": (request.entry_timeframe, request.entry_candles),
+        "confirmation": (request.confirmation_timeframe, request.confirmation_candles),
+        "context": (request.context_timeframe, request.context_candles),
+    }
+    evaluations = {}
+    try:
+        for role, (timeframe, candles) in datasets.items():
+            snapshot = calculate_indicators([c.model_dump() for c in candles])
+            evaluations[role] = {
+                "timeframe": timeframe,
+                "close": snapshot.close,
+                "indicators": snapshot.__dict__,
+                "signal": evaluate_trend(snapshot),
+            }
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    actions = [evaluations[role]["signal"]["action"] for role in ("entry", "confirmation", "context")]
+    aligned = actions[0] in ("BUY", "SELL") and actions.count(actions[0]) == len(actions)
+    return {
+        "market": request.market,
+        "ticker": request.ticker,
+        "evaluations": evaluations,
+        "alignment": "aligned" if aligned else "mixed_or_no_signal",
+        "signal": actions[0] if aligned else "HOLD",
+        "risk_reward_ratio": "1:3",
+        "live_execution_enabled": False,
+        "warning": "All three supplied datasets must be correctly timestamp-aligned and use the same instrument. This endpoint checks signal direction only; it does not resample candles or verify timestamp freshness.",
+    }
+
+
 @app.get("/timeframes/{style}")
 def timeframe_profile(style: Literal["scalping", "day_trading", "swing_trading"]):
     return get_timeframe_profile(style)
+
 
 @app.post("/backtest/run")
 def backtest_run(request: BacktestRequest):
@@ -143,6 +231,7 @@ def backtest_run(request: BacktestRequest):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     result.update({"market": request.market, "ticker": request.ticker, "timeframe": request.timeframe})
     return result
+
 
 @app.post("/webhook/tradingview")
 def tradingview_webhook(
@@ -169,6 +258,7 @@ def tradingview_webhook(
         "execution": "disabled",
         "mode": "paper_only",
     }
+
 
 @app.get("/signals")
 def get_signals(limit: int = Query(default=50, ge=1, le=200)):
