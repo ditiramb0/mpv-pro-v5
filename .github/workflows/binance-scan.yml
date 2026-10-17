@@ -2,6 +2,12 @@ name: Binance rotation scan
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "app/binance_scanner.py"
+      - "scripts/binance_rotation_report.py"
+      - ".github/workflows/binance-scan.yml"
   schedule:
     - cron: "0 5 * * *"
 
