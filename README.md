@@ -1,6 +1,6 @@
 # MPV PRO V5
 
-MPV PRO V5 is a forex and cryptocurrency trading-research API. It supports candle retrieval through Twelve Data, indicator-based baseline signals, multi-timeframe direction checks, heuristic market-structure analysis, risk planning, historical candle backtests, Finnhub news sentiment, authenticated TradingView signal intake, and a persistent simulated paper-order ledger.
+MPV PRO V5 is a forex and cryptocurrency trading-research API. It supports candle retrieval through Twelve Data, indicator-based baseline signals, on-demand multi-timeframe signal evaluation, heuristic market-structure analysis, risk planning, historical candle backtests, Finnhub news sentiment, authenticated TradingView signal intake, and a persistent simulated paper-order ledger.
 
 **Current mode: research / paper-only. Live broker or exchange order execution is not implemented or enabled.** No strategy is guaranteed to be profitable.
 
@@ -9,10 +9,11 @@ MPV PRO V5 is a forex and cryptocurrency trading-research API. It supports candl
 - `GET /` and `GET /health`: service status and version.
 - `GET /timeframes/{style}`: profiles for `scalping`, `day_trading`, and `swing_trading`.
 - `GET /market-data/candles?ticker=EURUSD&market=forex&timeframe=1h&limit=220`: fetch completed OHLC candles from Twelve Data.
+- `GET /strategy/auto-evaluate?ticker=EURUSD&market=forex&style=day_trading`: fetch entry, confirmation, and context candles, evaluate all three, and return BUY/SELL only when the baseline signals agree; otherwise HOLD.
 - `GET /news/sentiment?ticker=BTCUSDT&market=crypto`: retrieve Finnhub category headlines and score them with a transparent keyword heuristic.
 - `POST /risk/calculate`: stop-loss / take-profit planning with fixed 1:3 risk-to-reward.
 - `POST /strategy/evaluate`: EMA 9/21/50/200, RSI, MACD, ADX, Bollinger Bands, and ATR; returns a transparent baseline BUY/SELL/HOLD.
-- `POST /strategy/multi-timeframe`: evaluates separate entry, confirmation, and context candle sets; returns BUY/SELL only when all three baseline signals agree, otherwise HOLD.
+- `POST /strategy/multi-timeframe`: evaluate separately supplied entry, confirmation, and context candle sets.
 - `POST /market-structure/analyze`: heuristic swing highs/lows, BOS/CHoCH events, fair-value gaps, simple order-block candidates, and liquidity sweeps.
 - `POST /backtest/run`: historical candle simulation with configurable proportional fee and slippage assumptions.
 - `POST /paper/orders`: create a persistent simulated order with a 1:3 target and estimated position size.
@@ -50,6 +51,10 @@ python -m pytest -q
 Twelve Data is used for both forex and crypto candles. The API converts common tickers such as `EURUSD` to `EUR/USD` and `BTCUSDT` to `BTC/USDT`, requests UTC timestamps, validates OHLC values, sorts candles chronologically, and excludes candles whose interval has not finished. Some symbols or history depths may not be available on every plan.
 
 Twelve Data's Basic plan is listed as free with 8 API credits per minute and 800 per day, and includes real-time forex and crypto data for supported symbols. Verify current provider limits and licensing before use; the free plan is for internal/non-display use, not public redistribution. See the official [Twelve Data pricing page](https://twelvedata.com/pricing) and [API documentation](https://twelvedata.com/docs).
+
+## Automatic signal evaluation
+
+`/strategy/auto-evaluate` makes three candle requests using the selected style's entry, confirmation, and context profiles, evaluates the baseline on each timeframe, and returns a directional signal only if all three agree. It also includes heuristic market-structure output for the entry timeframe. It is on-demand, not a continuously running scanner, and it does not send orders. Provider limits apply; the default request uses three market-data API credits.
 
 ## Trading styles
 
