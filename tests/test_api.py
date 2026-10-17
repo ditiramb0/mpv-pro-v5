@@ -53,7 +53,7 @@ def test_timeframe_profiles_cover_all_styles():
             assert data["context_timeframes"]
 
 
-def test_backtest_endpoint_returns_cost_assumptions_and_warning():
+def test_backtest_endpoint_returns_cost_assumptions_and_json_safe_metrics():
     with TestClient(app) as client:
         response = client.post("/backtest/run", json={
             "market": "forex",
@@ -69,6 +69,8 @@ def test_backtest_endpoint_returns_cost_assumptions_and_warning():
     assert "net_return" in data
     assert data["assumptions"]["risk_reward"] == 3.0
     assert "Research approximation" in data["warning"]
+    assert data["profit_factor"] is None
+    assert data["profit_factor_status"] == "undefined_no_gross_losses"
 
 
 def test_webhook_requires_secret_and_deduplicates_signals(monkeypatch, tmp_path):
