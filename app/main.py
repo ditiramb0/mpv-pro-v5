@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Literal
 from uuid import uuid4
 
@@ -14,6 +15,7 @@ from app.backtest import run_backtest
 from app.timeframes import get_timeframe_profile
 from app.indicators import calculate_indicators
 from app.market_structure import analyze_market_structure
+from app.market_data import fetch_candles
 from app.news import fetch_news_sentiment
 from app.storage import close_paper_order, get_paper_order, initialize_database, recent_paper_orders, recent_signals, save_paper_order, save_signal
 from app.strategy import evaluate_trend
@@ -27,7 +29,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="MPV PRO V5",
-    version="0.6.0",
+    version="0.7.0",
     description="Forex and crypto signal research API. Live orders are disabled.",
     lifespan=lifespan,
 )
@@ -70,6 +72,7 @@ class TradingViewSignal(BaseModel):
 
 
 class Candle(BaseModel):
+    timestamp: datetime | None = None
     open: float = Field(gt=0)
     high: float = Field(gt=0)
     low: float = Field(gt=0)
@@ -128,6 +131,27 @@ def root():
 @app.get("/health")
 def health():
     return {"ok": True, "version": app.version}
+
+
+@app.get("/market-data/candles")
+async def market_data_candles(
+    ticker: str = Query(min_length=1, max_length=40),
+    market: Literal["forex", "crypto"] = Query(),
+    timeframe: Literal["1m", "5m", "15m", "30m", "1h", "2h", "4h", "1d", "1w"] = Query(default="1h"),
+    limit: int = Query(default=220, ge=15, le=1000),
+):
+    try:
+        return await fetch_candles(ticker=ticker, market=market, timeframe=timeframe, limit=limit)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="Market-data provider request timed out.") from exc
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"Market-data provider returned HTTP {exc.response.status_code}.") from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail="Could not reach the market-data provider.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/news/sentiment")
