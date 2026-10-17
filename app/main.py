@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from typing import Literal
 from uuid import uuid4
 
+import httpx
 from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 
@@ -13,6 +14,7 @@ from app.backtest import run_backtest
 from app.timeframes import get_timeframe_profile
 from app.indicators import calculate_indicators
 from app.market_structure import analyze_market_structure
+from app.news import fetch_news_sentiment
 from app.storage import close_paper_order, get_paper_order, initialize_database, recent_paper_orders, recent_signals, save_paper_order, save_signal
 from app.strategy import evaluate_trend
 
@@ -25,7 +27,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="MPV PRO V5",
-    version="0.5.2",
+    version="0.6.0",
     description="Forex and crypto signal research API. Live orders are disabled.",
     lifespan=lifespan,
 )
@@ -126,6 +128,24 @@ def root():
 @app.get("/health")
 def health():
     return {"ok": True, "version": app.version}
+
+
+@app.get("/news/sentiment")
+async def news_sentiment(
+    ticker: str = Query(min_length=1, max_length=40),
+    market: Literal["forex", "crypto"] = Query(),
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    try:
+        return await fetch_news_sentiment(ticker=ticker, market=market, limit=limit)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="News provider request timed out.") from exc
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"News provider returned HTTP {exc.response.status_code}.") from exc
+    except (httpx.RequestError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="Could not retrieve or parse news from the provider.") from exc
 
 
 @app.post("/risk/calculate")
