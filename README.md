@@ -9,6 +9,7 @@ MPV PRO V5 is a forex and cryptocurrency trading-research API. It supports candl
 - `GET /` and `GET /health`: service status and version.
 - `GET /timeframes/{style}`: profiles for `scalping`, `day_trading`, and `swing_trading`.
 - `GET /market-data/candles?ticker=EURUSD&market=forex&timeframe=1h&limit=220`: fetch completed OHLC candles from Twelve Data.
+- `GET /binance/rotation-scan`: read-only Binance Spot market scanner for BTC, ETH, FET, RENDER, NEAR, SUI, and AKT using completed 1h/4h candles; ranks relative strength and only emits BUY/SELL when the existing baseline agrees across both timeframes.
 - `GET /strategy/auto-evaluate?ticker=EURUSD&market=forex&style=day_trading`: fetch entry, confirmation, and context candles, evaluate all three, and return BUY/SELL only when the baseline signals agree; otherwise HOLD. When risk controls permit, it includes entry, stop-loss, take-profit, and estimated position size.
 - `GET /news/sentiment?ticker=BTCUSDT&market=crypto`: retrieve Finnhub category headlines and score them with a transparent keyword heuristic.
 - `GET /risk/status?equity=10000`: view emergency halt, daily realized P&L estimate, and consecutive-loss status.
@@ -46,6 +47,10 @@ Open `/docs` on the local server to explore and call the API. Run tests with:
 ```bash
 python -m pytest -q
 ```
+
+## Binance rotation scanner
+
+`GET /binance/rotation-scan` reads public Binance Spot candles without API keys, scores the default watchlist (`BTCUSDT`, `ETHUSDT`, `FETUSDT`, `RENDERUSDT`, `NEARUSDT`, `SUIUSDT`, `AKTUSDT`), and returns price, 24-hour momentum, RSI, ADX, 1h/4h baseline signals, and a transparent rotation score. Pass a custom list with `?symbols=BTCUSDT,FETUSDT`. This is read-only public market data—not an authenticated Binance Spot/Futures demo account. It never reads balances or places orders. Unsupported or unavailable pairs are reported under `errors` so one bad symbol does not stop the entire scan.
 
 ## Market-data notes
 
