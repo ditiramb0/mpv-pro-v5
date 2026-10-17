@@ -69,11 +69,15 @@ async def scan_binance_demo(symbols: list[str] | None = None) -> dict[str, Any]:
                 h, h4 = calculate_indicators(hourly), calculate_indicators(four_hour)
                 sig1, sig4 = evaluate_trend(h), evaluate_trend(h4)
                 change_24h = (hourly[-1]["close"] / hourly[-25]["close"] - 1) * 100
+                average_volume_20h = sum(item["volume"] for item in hourly[-21:-1]) / 20
+                volume_ratio = hourly[-1]["volume"] / average_volume_20h if average_volume_20h > 0 else None
                 aligned = sig1["action"] == sig4["action"] and sig1["action"] in ("BUY", "SELL")
                 score = (2 if aligned and sig1["action"] == "BUY" else -2 if aligned and sig1["action"] == "SELL" else 0) + (1 if h.close > h.ema200 else -1) + max(-1, min(1, change_24h / 10))
                 results.append({
                     "symbol": symbol, "price": h.close,
                     "change_24h_percent": round(change_24h, 3),
+                    "last_completed_1h_volume": hourly[-1]["volume"],
+                    "volume_vs_previous_20h_average": round(volume_ratio, 3) if volume_ratio is not None else None,
                     "rsi14_1h": round(h.rsi14, 2), "adx14_1h": round(h.adx14, 2),
                     "signal_1h": sig1["action"], "signal_4h": sig4["action"],
                     "signal": sig1["action"] if aligned else "HOLD",
