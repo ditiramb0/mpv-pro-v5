@@ -18,6 +18,7 @@ from app.indicators import calculate_indicators
 from app.market_structure import analyze_market_structure
 from app.market_data import fetch_candles
 from app.binance_scanner import DEFAULT_SYMBOLS, scan_binance_demo
+from app.binance_futures import DEFAULT_FUTURES_SYMBOLS, scan_binance_futures_context
 from app.news import fetch_news_sentiment
 from app.storage import close_paper_order, get_paper_order, initialize_database, paper_risk_state, recent_paper_orders, recent_signals, save_paper_order, save_signal
 from app.strategy import evaluate_trend
@@ -286,6 +287,24 @@ async def binance_rotation_scan(
         raise HTTPException(status_code=502, detail=f"Binance returned HTTP {exc.response.status_code}.") from exc
     except httpx.RequestError as exc:
         raise HTTPException(status_code=502, detail="Could not reach Binance public market data.") from exc
+
+
+@app.get("/binance/futures-context")
+async def binance_futures_context(
+    symbols: str = Query(default=",".join(DEFAULT_FUTURES_SYMBOLS), min_length=5, max_length=500),
+):
+    """Read-only public Binance USDⓈ-M Futures context; never places orders."""
+    requested = [part.strip().upper() for part in symbols.split(",") if part.strip()]
+    try:
+        return await scan_binance_futures_context(requested)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="Binance Futures market-data request timed out.") from exc
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"Binance Futures returned HTTP {exc.response.status_code}.") from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail="Could not reach Binance Futures public market data.") from exc
 
 
 @app.get("/news/sentiment")
