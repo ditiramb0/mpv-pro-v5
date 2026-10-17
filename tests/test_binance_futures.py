@@ -1,4 +1,4 @@
-import pytest
+import asyncio
 
 from app.binance_futures import _fetch_futures_symbol
 
@@ -28,9 +28,8 @@ class FakeClient:
         raise AssertionError(f"Unexpected URL: {url}")
 
 
-@pytest.mark.asyncio
-async def test_futures_context_parses_public_metrics():
-    result = await _fetch_futures_symbol(FakeClient(), "BTCUSDT")
+def test_futures_context_parses_public_metrics():
+    result = asyncio.run(_fetch_futures_symbol(FakeClient(), "BTCUSDT"))
     assert result["symbol"] == "BTCUSDT"
     assert result["mark_price"] == 101
     assert result["mark_index_basis_percent"] == 1.0
