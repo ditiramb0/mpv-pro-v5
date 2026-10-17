@@ -6,6 +6,7 @@ from typing import Sequence
 from app.indicators import calculate_indicators
 from app.strategy import evaluate_trend
 
+
 @dataclass
 class Trade:
     side: str
@@ -18,6 +19,7 @@ class Trade:
     pnl: float
     exit_reason: str
 
+
 def run_backtest(
     candles: Sequence[dict],
     *,
@@ -27,11 +29,11 @@ def run_backtest(
     fee_rate: float = 0.0005,
     slippage_rate: float = 0.0002,
 ) -> dict:
-    """Educational close-to-close baseline, long/short one position at a time.
+    """Educational candle backtest, long/short one position at a time.
 
     Signal uses data through candle i; entry occurs at candle i+1 open.
-    If both stop and target are touched in one candle, stop is assumed first.
-    Fees/slippage are simple proportional price-cost estimates, not broker-specific.
+    If stop and target are both touched in one candle, stop is assumed first.
+    Costs are proportional estimates, not broker-specific execution modelling.
     """
     if len(candles) < warmup + 2:
         raise ValueError(f"At least {warmup + 2} candles are required.")
@@ -57,7 +59,7 @@ def run_backtest(
             continue
         stop = entry - distance if side == "BUY" else entry + distance
         target = entry + distance * risk_reward if side == "BUY" else entry - distance * risk_reward
-        exit_price, exit_i, reason = float(candles[-1]["close"]), len(candles)-1, "end_of_data"
+        exit_price, exit_i, reason = float(candles[-1]["close"]), len(candles) - 1, "end_of_data"
         for j in range(entry_i, len(candles)):
             high, low = float(candles[j]["high"]), float(candles[j]["low"])
             if side == "BUY":
@@ -80,20 +82,23 @@ def run_backtest(
         trades.append(Trade(side, entry_i, exit_i, entry, exit_price, stop, target, net_return, reason))
         equity_curve.append(equity_curve[-1] * (1 + net_return))
         i = max(exit_i + 1, entry_i + 1)
+
     wins = [t for t in trades if t.pnl > 0]
     losses = [t for t in trades if t.pnl <= 0]
     gross_profit = sum(t.pnl for t in wins)
     gross_loss = abs(sum(t.pnl for t in losses))
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else None
     peak, max_drawdown = 1.0, 0.0
     for equity in equity_curve:
         peak = max(peak, equity)
         if peak:
-            max_drawdown = max(max_drawdown, (peak-equity)/peak)
+            max_drawdown = max(max_drawdown, (peak - equity) / peak)
     return {
         "trade_count": len(trades),
         "win_rate": len(wins) / len(trades) if trades else 0.0,
         "net_return": equity_curve[-1] - 1.0,
-        "profit_factor": gross_profit / gross_loss if gross_loss else (float("inf") if gross_profit else 0.0),
+        "profit_factor": profit_factor,
+        "profit_factor_status": "calculated" if profit_factor is not None else "undefined_no_gross_losses",
         "max_drawdown": max_drawdown,
         "equity_curve": equity_curve,
         "trades": [t.__dict__ for t in trades],
